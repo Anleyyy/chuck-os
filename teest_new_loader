@@ -1,0 +1,69 @@
+global loader                   ; the entry symbol for ELF
+extern unicorn
+
+
+KERNEL_STACK_SIZE equ 4096
+MAGIC_NUMBER equ 0x1BADB002     ; define the magic number constant
+FLAGS        equ 0x0            ; multiboot flags
+CHECKSUM     equ -MAGIC_NUMBER  ; calculate the checksum
+                                ; (magic number + checksum + flags should equal 0)
+BLACK equ 0x0
+WHITE equ 0xF
+
+section .bss
+align 4
+kernel_stack:
+    resb KERNEL_STACK_SIZE
+
+
+section .multiboot
+align 4
+    dd MAGIC_NUMBER
+    dd FLAGS
+    dd CHECKSUM
+
+section .text:                  ; start of the text (code) section
+
+id_map_loop:
+    mov [eax], ebx
+    add eax, 0x00000004
+    add ebx, 0x00001000
+
+setup_page_directory:
+    mov eax, cr3    
+    add eax, 0x00001001
+    mov [cr3], eax    ; setup le PDE des 4 premiers MB
+
+    mov ecx, 1024
+    mov ebx, 0x00000001
+    mov eax, cr3
+    add eax, 0x00001000
+    loop id_map_loop   ; setup les PT des 4 premiers MB
+
+    mov eax, cr3
+    add eax, 0x00301001
+    mov [cr3 + 3072], eax   ; setup le PDE de l'adresse 0xC0100000 (3072: 10 premiers bits de 0xC0100000 multiplié par 4)
+
+    mov eax, cr3
+    add eax, 0x00301000
+    mov [eax], 0x00100001
+
+    mov ebx, cr0        ; read current cr0
+    or  ebx, 0x80000000 ; set PG
+    mov cr0, ebx        ; update cr0
+
+    ; now paging is enabled
+    jmp kernel
+
+loader:                         ; the loader label (defined as entry point in linker script)
+    mov esp, kernel_stack + KERNEL_STACK_SIZE
+    mov cr3, 0x40000000        ; place the adress of the page directory (PDT) in the register cr3
+    jmp setup_page_directory
+    
+kernel:
+    push byte BLACK
+    push byte WHITE
+    call unicorn
+
+.loop:
+    jmp .loop                   ; loop forever
